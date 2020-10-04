@@ -4,7 +4,7 @@ module Main where
 
 import Control.Monad (forever, void)
 import Control.Concurrent (forkIO, threadDelay)
-import Data.List (delete)
+import Data.List (delete, unfoldr)
 
 import Brick.AttrMap
 import Brick.BChan
@@ -33,6 +33,7 @@ data Snake = Snake
 data Game = Game
   { _snake :: Snake
   , _food :: [Position]
+  , _walls :: [Position]
   , _score :: Integer
   , _stdgen :: StdGen
   }
@@ -46,7 +47,7 @@ data Name = SomeName deriving (Eq, Ord)
 
 data GameEvent = Tick
 
-data Cell = Head | Body | Food | Empty
+data Cell = Head | Body | Food | Wall | Empty
 
 initSnake :: Snake
 initSnake = Snake { _body = [Position x 10 | x <- [10, 9, 8]]
@@ -56,23 +57,17 @@ initSnake = Snake { _body = [Position x 10 | x <- [10, 9, 8]]
 moveSnake :: Game -> Maybe Game
 moveSnake game = if collision then Nothing else Just game'
   where
-    collision = newHd `elem` newTail
+    collision = newHd `elem` game^.walls || newHd `elem` newTail
     ateFood = newHd `elem` game^.food
     -- TODO: Figure out why the pattern doesn't need brackets around it...
     Snake (hd:tl) dir = game^.snake
+    -- TODO: Use movePosition here!
     newHd = case dir of
       North -> hd & py -~ 1 & wrap
       South -> hd & py +~ 1 & wrap
       East -> hd & px +~ 1 & wrap
       West -> hd & px -~ 1 & wrap
-    maxX = gameWidth - 1
-    maxY = gameHeight - 1
-    wrap pos
-      | pos^.px < 0 = pos & px .~ maxX
-      | pos^.px > maxX = pos & px .~ 0
-      | pos^.py < 0 = pos & py .~ maxY
-      | pos^.py > maxY = pos & py .~ 0
-      | otherwise = pos
+    wrap = wrapPosition (gameWidth-1, gameHeight-1)
     newTail = if ateFood
                 then hd : tl
                 else if null tl then [] else hd : init tl -- TODO: performance???
@@ -87,24 +82,78 @@ gameWidth = 50
 gameHeight = 20
 gameMaxFood = 3
 
+-- TODO: Move position stuff to a module. generalize genPosition to take range arguments
+genPosition :: StdGen -> (Position, StdGen)
+genPosition g =
+  let (x, g1) = uniformR (0, gameWidth-1) g
+      (y, g2) = uniformR (0, gameHeight-1) g1
+  in (Position x y, g2)
+
+-- randomPosition :: ...
+
+wrapPosition :: (Int, Int) -> Position -> Position
+wrapPosition (maxX, maxY) pos
+  | pos^.px < 0    = pos & px .~ maxX
+  | pos^.px > maxX = pos & px .~ 0
+  | pos^.py < 0    = pos & py .~ maxY
+  | pos^.py > maxY = pos & py .~ 0
+  | otherwise      = pos
+
+movePosition :: Position -> Direction -> Position
+movePosition p North = p & py %~ pred
+movePosition p South = p & py %~ succ
+movePosition p East  = p & px %~ succ
+movePosition p West  = p & px %~ pred
+
+buildPositions :: Position -> Int -> Direction -> [Position]
+buildPositions start len dir = unfoldr (\(p, n) ->
+                                         if n == 0
+                                           then Nothing
+                                           else let p' = wrapPosition (gameWidth-1, gameHeight-1) $ movePosition p dir
+                                                in Just (p', (p', n-1)))
+                                       (start, len)
+
+randomDirection :: Direction -> StdGen -> (Direction, StdGen)
+randomDirection dir gen = (newDir, newGen)
+  where
+    (idx, newGen) = uniformR (0, 2) gen
+    newDir = case dir of
+               North -> [North, East, West]  !! idx
+               South -> [South, East, West]  !! idx
+               East  -> [East, North, South] !! idx
+               West  -> [West, North, South] !! idx
+
+buildWall :: Int -> Direction -> StdGen -> ([Position], StdGen)
+buildWall total to gen = go total to ([], gen)
+  where
+    maxPartLen = total `div` 2
+    go 0 d res = res
+    go l d (wls, g) = let (pos, g1) = if null wls then genPosition g else (last wls, gen)
+                          (len, g2) = uniformR (1, min l maxPartLen) g1
+                          (dir, g3) = randomDirection d g2
+                      in go (l-len) dir (wls ++ buildPositions pos len dir, g3)
+
+
 initGame :: StdGen -> Game
 initGame gen = Game { _snake = initSnake
                     , _food = []
+                    , _walls = wall1 ++ wall2
                     , _score = 0
-                    , _stdgen = gen
+                    , _stdgen = g2
                     }
+  where (wall1, g1) = buildWall 10 North gen
+        (wall2, g2) = buildWall 7 East g1
 
 spawnFood :: Game -> Game
 spawnFood game =
-  let obstructed = game^.snake^.body
+  let obstructed = game^.walls ++ game^.snake^.body
       -- TODO/FIXME: This is stupid and going to be slow when snake gets very long.
       --             Figure out something better.
       genFood 0 _ fd = fd
-      genFood n g fd = let (x, g2) = uniformR (0, gameWidth-1) g
-                           (y, g3) = uniformR (0, gameHeight-1) g2
-                       in if (Position x y) `notElem` obstructed
-                            then genFood (n-1) g3 (Position x y : fd)
-                            else genFood n g3 fd
+      genFood n g fd = let (pos, g') = genPosition g
+                       in if pos `notElem` obstructed
+                            then genFood (n-1) g' (pos : fd)
+                            else genFood n g' fd
   in game & food .~ genFood gameMaxFood (game^.stdgen) []
 
 
@@ -117,12 +166,12 @@ tickGame game = moveSnake game'
 
 -- TODO/FIXME: Now this is still slow, because it constructs/renders
 --             the entire board on every tick.
-drawGame :: Game -> [Widget Name]
-drawGame (Game (Snake (hd:tl) _) fd scr _) = [hCenter $ vBox [ border $ vBox [drawRow ry | ry <- [0..gameHeight-1]]
-                                                             , padLeft (Pad $ gameWidth-1-pad) .
-                                                                 borderWithLabel (str "score") .
-                                                                   padLeft (Pad pad) . str $ show scr
-                                                             ]]
+drawGame :: Game -> [Widget Name] -- TODO: remove the pattern match and use lenses + pattern match to focus on Snake (hd:tl) only....
+drawGame (Game (Snake (hd:tl) _) fd wl scr _) = [hCenter $ vBox [ border $ vBox [drawRow ry | ry <- [0..gameHeight-1]]
+                                                                , padLeft (Pad $ gameWidth-1-pad) .
+                                                                    borderWithLabel (str "score") .
+                                                                      padLeft (Pad pad) . str $ show scr
+                                                                ]]
   where
     pad = 6
     drawRow ry = str [cell cx ry | cx <- [0..gameWidth-1]]
@@ -130,10 +179,12 @@ drawGame (Game (Snake (hd:tl) _) fd scr _) = [hCenter $ vBox [ border $ vBox [dr
       | cx == hd^.px && cy == hd^.py = drawCell Head
       | (Position cx cy) `elem` tl = drawCell Body
       | (Position cx cy) `elem` fd = drawCell Food
+      | (Position cx cy) `elem` wl = drawCell Wall
       | otherwise = drawCell Empty
     drawCell Head = 'λ'
     drawCell Body = '○'
     drawCell Food = '✦'
+    drawCell Wall = '⯀'
     drawCell Empty = ' '
 
 
