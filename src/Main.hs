@@ -113,22 +113,22 @@ tickGame game = moveSnake game'
               then spawnFood game
               else game
 
-drawCell :: Cell -> Widget Name
-drawCell Head = str "λ"
-drawCell Body = str "○"
-drawCell Food = str "✦"
-drawCell Empty = str " "
-
--- TODO/FIXME: Now this is SLOW AS FUCK! See profiler output...
+-- TODO/FIXME: Now this is still slow, because it constructs/renders
+--             the entire board on every tick.
 drawGame :: Game -> [Widget Name]
 drawGame (Game (Snake (hd:tl) _) fd _ _) = [border $ vBox [drawRow ry | ry <- [0..gameHeight-1]]]
   where
-    drawRow ry = hBox [cell cx ry | cx <- [0..gameWidth-1]]
+    drawRow ry = str [cell cx ry | cx <- [0..gameWidth-1]]
     cell cx cy
       | cx == hd^.px && cy == hd^.py = drawCell Head
       | (Position cx cy) `elem` tl = drawCell Body
       | (Position cx cy) `elem` fd = drawCell Food
       | otherwise = drawCell Empty
+    drawCell Head = 'λ'
+    drawCell Body = '○'
+    drawCell Food = '✦'
+    drawCell Empty = ' '
+
 
 handleGameEvent :: Game -> BrickEvent Name GameEvent -> EventM Name (Next Game)
 handleGameEvent game e =
