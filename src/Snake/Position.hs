@@ -25,15 +25,17 @@ data Position = Position
 
 makeLenses ''Position
 
--- | Generate random Position given the ranges r1 and r2.
+-- | Generate random position given the ranges r1 and r2.
 random :: (Int, Int) -> (Int, Int) -> StdGen -> (Position, StdGen)
 random r1 r2 gen =
   let (x, g1) = uniformR r1 gen
       (y, g2) = uniformR r2 g1
   in (Position x y, g2)
 
--- TODO: Docs.
-wrap :: (Int, Int) -> Position -> Position
+-- | Wrap position using the ranges (0, maxX) and (0, maxY).
+wrap :: (Int, Int) -- ^ (maxX, maxY)
+     -> Position   -- ^ The position
+     -> Position
 wrap (maxX, maxY) pos
   | pos^.px < 0    = pos & px .~ maxX
   | pos^.px > maxX = pos & px .~ 0
@@ -41,15 +43,19 @@ wrap (maxX, maxY) pos
   | pos^.py > maxY = pos & py .~ 0
   | otherwise      = pos
 
--- TODO: Docs.
+-- | Move position one unit (using 'succ' and 'pred') in the specified direction.
 move :: Position -> Direction -> Position
 move p North = p & py %~ pred
 move p South = p & py %~ succ
 move p East  = p & px %~ succ
 move p West  = p & px %~ pred
 
--- TODO: Docs.
-build :: Position -> Int -> Direction -> (Int, Int) -> [Position]
+-- | Build a list of connected positions.
+build :: Position   -- ^ Starting position, not included in the result
+      -> Int        -- ^ Total length
+      -> Direction  -- ^ Direction in which to build
+      -> (Int, Int) -- ^ Range of (maxX, maxY) to which the built positions are 'wrap'ped
+      -> [Position]
 build start len dir wrapRange = unfoldr (\(p, n) ->
                                           if n == 0
                                             then Nothing
