@@ -59,15 +59,8 @@ moveSnake game = if collision then Nothing else Just game'
   where
     collision = newHd `elem` game^.walls || newHd `elem` newTail
     ateFood = newHd `elem` game^.food
-    -- TODO: Figure out why the pattern doesn't need brackets around it...
     Snake (hd:tl) dir = game^.snake
-    -- TODO: Use movePosition here!
-    newHd = case dir of
-      North -> hd & py -~ 1 & wrap
-      South -> hd & py +~ 1 & wrap
-      East -> hd & px +~ 1 & wrap
-      West -> hd & px -~ 1 & wrap
-    wrap = wrapPosition (gameWidth-1, gameHeight-1)
+    newHd = wrapPosition (gameWidth-1, gameHeight-1) $ movePosition hd dir
     newTail = if ateFood
                 then hd : tl
                 else if null tl then [] else hd : init tl -- TODO: performance???
