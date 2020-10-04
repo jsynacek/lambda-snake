@@ -84,12 +84,14 @@ spawnFood game =
   let obstructed = game^.walls ++ game^.snake^.body
       -- TODO/FIXME: This is stupid and going to be slow when snake gets very long.
       --             Figure out something better.
-      genFood 0 _ fd = fd
+      genFood 0 g fd = (fd, g)
       genFood n g fd = let (pos, g') = genPosition g
                        in if pos `notElem` obstructed
                             then genFood (n-1) g' (pos : fd)
                             else genFood n g' fd
-  in game & food .~ genFood gameMaxFood (game^.stdgen) []
+      (newFood, newGen) = genFood gameMaxFood (game^.stdgen) []
+  in game & food .~ newFood
+          & stdgen .~ newGen
 
 tickSnake :: Game -> Maybe Game
 tickSnake game = if collision then Nothing else Just game'
