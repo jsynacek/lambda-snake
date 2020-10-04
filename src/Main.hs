@@ -48,7 +48,7 @@ data GameEvent = Tick
 data Cell = Head | Body | Food | Empty
 
 initSnake :: Snake
-initSnake = Snake { _body = [Position x 10 | x <- [10, 9..3]]
+initSnake = Snake { _body = [Position x 10 | x <- [10, 9, 8]]
                   , _direction = East
                   }
 
@@ -74,7 +74,7 @@ moveSnake game = if collision then Nothing else Just game'
       | otherwise = pos
     newTail = if ateFood
                 then hd : tl
-                else hd : init tl -- TODO: performance???
+                else if null tl then [] else hd : init tl -- TODO: performance???
     game' = if ateFood
               then game & snake . body .~ newHd:newTail
                         & food %~ delete newHd
