@@ -5,6 +5,7 @@ module Main where
 import Control.Monad (forever, void)
 import Control.Concurrent (forkIO, threadDelay)
 import Data.List (delete)
+import Text.Printf (printf)
 
 import Brick.AttrMap
 import Brick.BChan
@@ -120,11 +121,10 @@ drawGame :: Game -> [Widget ()]
 drawGame game = [hCenter $ vBox [ border $ vBox [drawRow ry | ry <- [0..gameMaxY]]
                                                 , padLeft (Pad $ gameMaxX-pad) .
                                                   borderWithLabel (str "score") .
-                                                    padLeft (Pad pad) . str $ show scr
+                                                    str . printf "%7v" $ game^.score
                                                 ]]
   where
     Snake (hd:tl) _ = game^.snake
-    scr = game^.score
     pad = 6
     drawRow ry = str [cell cx ry | cx <- [0..gameMaxX]]
     cell cx cy
