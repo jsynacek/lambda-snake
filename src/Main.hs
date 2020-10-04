@@ -4,7 +4,7 @@ module Main where
 
 import Control.Monad (forever, void)
 import Control.Concurrent (forkIO, threadDelay)
-import Data.List (delete, unfoldr)
+import Data.List (delete)
 
 import Brick.AttrMap
 import Brick.BChan
@@ -18,12 +18,10 @@ import Lens.Micro
 import Lens.Micro.TH (makeLenses)
 import System.Random (StdGen, getStdGen, uniformR)
 
-data Position = Position
-  { _px :: Int
-  , _py :: Int
-  } deriving (Eq)
-
-data Direction = North | South | East | West deriving Eq
+import           Snake.Direction (Direction(..))
+import qualified Snake.Direction as D
+import           Snake.Position (Position(..), px, py)
+import qualified Snake.Position as P
 
 data Snake = Snake
   { _body :: [Position] -- TODO: Must never be empty. Use NonEmpty??
@@ -38,83 +36,27 @@ data Game = Game
   , _stdgen :: StdGen
   }
 
-makeLenses ''Position
-makeLenses ''Direction
-makeLenses ''Snake
-makeLenses ''Game
-
-data Name = SomeName deriving (Eq, Ord)
-
 data GameEvent = Tick
 
 data Cell = Head | Body | Food | Wall | Empty
+
+makeLenses ''Snake
+makeLenses ''Game
+
+gameWidth, gameHeight, gameMaxFood, gameMaxX, gameMaxY :: Int
+gameWidth = 50
+gameHeight = 20
+gameMaxFood = 3
+gameMaxX = gameWidth - 1
+gameMaxY = gameHeight - 1
 
 initSnake :: Snake
 initSnake = Snake { _body = [Position x 10 | x <- [10, 9, 8]]
                   , _direction = East
                   }
 
-moveSnake :: Game -> Maybe Game
-moveSnake game = if collision then Nothing else Just game'
-  where
-    collision = newHd `elem` game^.walls || newHd `elem` newTail
-    ateFood = newHd `elem` game^.food
-    Snake (hd:tl) dir = game^.snake
-    newHd = wrapPosition (gameWidth-1, gameHeight-1) $ movePosition hd dir
-    newTail = if ateFood
-                then hd : tl
-                else if null tl then [] else hd : init tl -- TODO: performance???
-    game' = if ateFood
-              then game & snake . body .~ newHd:newTail
-                        & food %~ delete newHd
-                        & score %~ succ
-              else game & snake . body .~ newHd:newTail
-
-gameWidth, gameHeight, gameMaxFood :: Int
-gameWidth = 50
-gameHeight = 20
-gameMaxFood = 3
-
--- TODO: Move position stuff to a module. generalize genPosition to take range arguments
 genPosition :: StdGen -> (Position, StdGen)
-genPosition g =
-  let (x, g1) = uniformR (0, gameWidth-1) g
-      (y, g2) = uniformR (0, gameHeight-1) g1
-  in (Position x y, g2)
-
--- randomPosition :: ...
-
-wrapPosition :: (Int, Int) -> Position -> Position
-wrapPosition (maxX, maxY) pos
-  | pos^.px < 0    = pos & px .~ maxX
-  | pos^.px > maxX = pos & px .~ 0
-  | pos^.py < 0    = pos & py .~ maxY
-  | pos^.py > maxY = pos & py .~ 0
-  | otherwise      = pos
-
-movePosition :: Position -> Direction -> Position
-movePosition p North = p & py %~ pred
-movePosition p South = p & py %~ succ
-movePosition p East  = p & px %~ succ
-movePosition p West  = p & px %~ pred
-
-buildPositions :: Position -> Int -> Direction -> [Position]
-buildPositions start len dir = unfoldr (\(p, n) ->
-                                         if n == 0
-                                           then Nothing
-                                           else let p' = wrapPosition (gameWidth-1, gameHeight-1) $ movePosition p dir
-                                                in Just (p', (p', n-1)))
-                                       (start, len)
-
-randomDirection :: Direction -> StdGen -> (Direction, StdGen)
-randomDirection dir gen = (newDir, newGen)
-  where
-    (idx, newGen) = uniformR (0, 2) gen
-    newDir = case dir of
-               North -> [North, East, West]  !! idx
-               South -> [South, East, West]  !! idx
-               East  -> [East, North, South] !! idx
-               West  -> [West, North, South] !! idx
+genPosition = P.random (0, gameMaxX) (0, gameMaxY)
 
 buildWall :: Int -> Direction -> StdGen -> ([Position], StdGen)
 buildWall total to gen = go total to ([], gen)
@@ -123,9 +65,8 @@ buildWall total to gen = go total to ([], gen)
     go 0 d res = res
     go l d (wls, g) = let (pos, g1) = if null wls then genPosition g else (last wls, gen)
                           (len, g2) = uniformR (1, min l maxPartLen) g1
-                          (dir, g3) = randomDirection d g2
-                      in go (l-len) dir (wls ++ buildPositions pos len dir, g3)
-
+                          (dir, g3) = D.random d g2
+                      in go (l-len) dir (wls ++ P.build pos len dir (gameMaxX, gameMaxY), g3)
 
 initGame :: StdGen -> Game
 initGame gen = Game { _snake = initSnake
@@ -149,9 +90,25 @@ spawnFood game =
                             else genFood n g' fd
   in game & food .~ genFood gameMaxFood (game^.stdgen) []
 
+tickSnake :: Game -> Maybe Game
+tickSnake game = if collision then Nothing else Just game'
+  where
+    collision = newHd `elem` game^.walls || newHd `elem` newTail
+    ateFood = newHd `elem` game^.food
+    Snake (hd:tl) dir = game^.snake
+    newHd = P.wrap (gameMaxX, gameMaxY) $ P.move hd dir
+    newTail = if ateFood
+                then hd : tl
+                else if null tl then [] else hd : init tl -- TODO: performance???
+    game' = if ateFood
+              then game & snake . body .~ newHd:newTail
+                        & food %~ delete newHd
+                        & score %~ succ
+              else game & snake . body .~ newHd:newTail
+
 
 tickGame :: Game -> Maybe Game
-tickGame game = moveSnake game'
+tickGame game = tickSnake game'
   where
     game' = if (null $ game^.food)
               then spawnFood game
@@ -159,21 +116,25 @@ tickGame game = moveSnake game'
 
 -- TODO/FIXME: Now this is still slow, because it constructs/renders
 --             the entire board on every tick.
-drawGame :: Game -> [Widget Name] -- TODO: remove the pattern match and use lenses + pattern match to focus on Snake (hd:tl) only....
-drawGame (Game (Snake (hd:tl) _) fd wl scr _) = [hCenter $ vBox [ border $ vBox [drawRow ry | ry <- [0..gameHeight-1]]
-                                                                , padLeft (Pad $ gameWidth-1-pad) .
-                                                                    borderWithLabel (str "score") .
-                                                                      padLeft (Pad pad) . str $ show scr
-                                                                ]]
+drawGame :: Game -> [Widget ()]
+drawGame game = [hCenter $ vBox [ border $ vBox [drawRow ry | ry <- [0..gameMaxY]]
+                                                , padLeft (Pad $ gameMaxX-pad) .
+                                                  borderWithLabel (str "score") .
+                                                    padLeft (Pad pad) . str $ show scr
+                                                ]]
   where
+    Snake (hd:tl) _ = game^.snake
+    scr = game^.score
     pad = 6
-    drawRow ry = str [cell cx ry | cx <- [0..gameWidth-1]]
+    drawRow ry = str [cell cx ry | cx <- [0..gameMaxX]]
     cell cx cy
       | cx == hd^.px && cy == hd^.py = drawCell Head
-      | (Position cx cy) `elem` tl = drawCell Body
-      | (Position cx cy) `elem` fd = drawCell Food
-      | (Position cx cy) `elem` wl = drawCell Wall
+      | pos `elem` tl = drawCell Body
+      | pos `elem` game^.food = drawCell Food
+      | pos `elem` game^.walls = drawCell Wall
       | otherwise = drawCell Empty
+      where
+        pos = Position cx cy
     drawCell Head = 'λ'
     drawCell Body = '○'
     drawCell Food = '✦'
@@ -181,7 +142,7 @@ drawGame (Game (Snake (hd:tl) _) fd wl scr _) = [hCenter $ vBox [ border $ vBox 
     drawCell Empty = ' '
 
 
-handleGameEvent :: Game -> BrickEvent Name GameEvent -> EventM Name (Next Game)
+handleGameEvent :: Game -> BrickEvent () GameEvent -> EventM () (Next Game)
 handleGameEvent game e =
   case e of
     AppEvent Tick -> case tickGame game of
@@ -194,16 +155,11 @@ handleGameEvent game e =
     VtyEvent (EvKey KEsc _) -> halt game
     _ -> continue game
   where
-    oldDir = game^.snake^.direction
-    changeDirection dir = if (opposite dir /= oldDir)
-                              then game & snake . direction .~ dir
-                              else game
-    opposite North = South
-    opposite South = North
-    opposite East = West
-    opposite West = East
+    changeDirection dir = if (D.opposite dir /= game^.snake^.direction)
+                            then game & snake . direction .~ dir
+                            else game
 
-app :: App Game GameEvent Name
+app :: App Game GameEvent ()
 app = App { appDraw = drawGame
           , appChooseCursor = const $ pure Nothing
           , appHandleEvent = handleGameEvent
