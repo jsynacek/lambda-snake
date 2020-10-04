@@ -9,6 +9,7 @@ import Data.List (delete)
 import Brick.AttrMap
 import Brick.BChan
 import Brick.Main
+import Brick.Widgets.Center
 import Brick.Widgets.Border
 import Brick.Widgets.Core
 import Brick.Types hiding (Direction)
@@ -78,6 +79,7 @@ moveSnake game = if collision then Nothing else Just game'
     game' = if ateFood
               then game & snake . body .~ newHd:newTail
                         & food %~ delete newHd
+                        & score %~ succ
               else game & snake . body .~ newHd:newTail
 
 gameWidth, gameHeight, gameMaxFood :: Int
@@ -116,8 +118,13 @@ tickGame game = moveSnake game'
 -- TODO/FIXME: Now this is still slow, because it constructs/renders
 --             the entire board on every tick.
 drawGame :: Game -> [Widget Name]
-drawGame (Game (Snake (hd:tl) _) fd _ _) = [border $ vBox [drawRow ry | ry <- [0..gameHeight-1]]]
+drawGame (Game (Snake (hd:tl) _) fd scr _) = [hCenter $ vBox [ border $ vBox [drawRow ry | ry <- [0..gameHeight-1]]
+                                                             , padLeft (Pad $ gameWidth-1-pad) .
+                                                                 borderWithLabel (str "score") .
+                                                                   padLeft (Pad pad) . str $ show scr
+                                                             ]]
   where
+    pad = 6
     drawRow ry = str [cell cx ry | cx <- [0..gameWidth-1]]
     cell cx cy
       | cx == hd^.px && cy == hd^.py = drawCell Head
