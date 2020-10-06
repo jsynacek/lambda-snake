@@ -63,7 +63,7 @@ buildWall :: Int -> Direction -> StdGen -> ([Position], StdGen)
 buildWall total to gen = go total to ([], gen)
   where
     maxPartLen = total `div` 2
-    go 0 d res = res
+    go 0 _ res = res
     go l d (wls, g) = let (pos, g1) = if null wls then genPosition g else (last wls, gen)
                           (len, g2) = uniformR (1, min l maxPartLen) g1
                           (dir, g3) = D.random d g2
