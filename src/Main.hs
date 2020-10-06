@@ -100,9 +100,10 @@ tickSnake game = if collision then Nothing else Just game'
     ateFood = newHd `elem` game^.food
     Snake (hd:tl) dir = game^.snake
     newHd = P.wrap (gameMaxX, gameMaxY) $ P.move hd dir
-    newTail = if ateFood
-                then hd : tl
-                else if null tl then [] else hd : init tl -- TODO: performance???
+    newTail
+      | ateFood = hd : tl
+      | null tl = []
+      | otherwise = hd : init tl -- TODO: performance???
     game' = if ateFood
               then game & snake . body .~ newHd:newTail
                         & food %~ delete newHd
@@ -113,7 +114,7 @@ tickSnake game = if collision then Nothing else Just game'
 tickGame :: Game -> Maybe Game
 tickGame game = tickSnake game'
   where
-    game' = if (null $ game^.food)
+    game' = if null $ game^.food
               then spawnFood game
               else game
 
@@ -157,7 +158,7 @@ handleGameEvent game e =
     VtyEvent (EvKey KEsc _) -> halt game
     _ -> continue game
   where
-    changeDirection dir = if (D.opposite dir /= game^.snake^.direction)
+    changeDirection dir = if D.opposite dir /= game^.snake^.direction
                             then game & snake . direction .~ dir
                             else game
 
