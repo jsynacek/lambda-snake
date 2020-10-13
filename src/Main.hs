@@ -3,8 +3,12 @@
 module Main where
 
 import Control.Monad (forever, void)
+import Control.Monad.State
+import Control.Monad.STM (atomically)
 import Control.Concurrent (forkIO, threadDelay)
+import Control.Concurrent.STM.TVar
 import Data.List (delete)
+import Data.Time.Clock (NominalDiffTime, UTCTime, diffUTCTime, getCurrentTime)
 import Text.Printf (printf)
 
 import Brick.AttrMap
@@ -34,6 +38,9 @@ data Game = Game
   , _food :: [Position]
   , _walls :: [Position]
   , _score :: Integer
+  , _speed :: Int
+  , _tvar  :: TVar Int
+  , _time  :: UTCTime
   , _stdgen :: StdGen
   }
 
@@ -45,11 +52,19 @@ makeLenses ''Snake
 makeLenses ''Game
 
 gameWidth, gameHeight, gameMaxFood, gameMaxX, gameMaxY :: Int
+
 gameWidth = 50
 gameHeight = 20
 gameMaxFood = 3
 gameMaxX = gameWidth - 1
 gameMaxY = gameHeight - 1
+
+gameMaxSpeed, gameDelayStep :: Int
+gameDelayStep = 13000
+gameMaxSpeed = 10
+
+gameSpeedChangeInterval :: NominalDiffTime
+gameSpeedChangeInterval = 20 -- seconds
 
 initSnake :: Snake
 initSnake = Snake { _body = [Position x 10 | x <- [10, 9, 8]]
@@ -69,13 +84,16 @@ buildWall total to gen = go total to ([], gen)
                           (dir, g3) = D.random d g2
                       in go (l-len) dir (wls ++ P.build pos len dir (gameMaxX, gameMaxY), g3)
 
-initGame :: StdGen -> Game
-initGame gen = Game { _snake = initSnake
-                    , _food = []
-                    , _walls = wall1 ++ wall2
-                    , _score = 0
-                    , _stdgen = g2
-                    }
+initGame :: StdGen -> TVar Int -> UTCTime -> Game
+initGame gen tv tm = Game { _snake = initSnake
+                          , _food = []
+                          , _walls = wall1 ++ wall2
+                          , _score = 0
+                          , _speed = 0
+                          , _tvar = tv
+                          , _time = tm
+                          , _stdgen = g2
+                          }
   where (wall1, g1) = buildWall 10 North gen
         (wall2, g2) = buildWall 7 East g1
 
@@ -121,14 +139,14 @@ tickGame game = tickSnake game'
 -- TODO/FIXME: Now this is still slow, because it constructs/renders
 --             the entire board on every tick.
 drawGame :: Game -> [Widget ()]
-drawGame game = [hCenter $ vBox [ border $ vBox [drawRow ry | ry <- [0..gameMaxY]]
-                                                , padLeft (Pad $ gameMaxX-pad) .
-                                                  borderWithLabel (str "score") .
-                                                    str . printf "%7v" $ game^.score
-                                                ]]
+drawGame game = [hCenter $ vBox [ border mainWidget, padLeft (Pad padding) lowerBar ]]
   where
+    mainWidget = vBox [drawRow ry | ry <- [0..gameMaxY]]
+    lowerBar = hBox [ speedWidget, scoreWidget]
+    speedWidget = borderWithLabel (str "speed") . str . printf "%5v" $ game^.speed
+    scoreWidget = borderWithLabel (str "score") . str . printf "%7v" $ game^.score
+    padding = gameWidth - 12 - 2
     Snake (hd:tl) _ = game^.snake
-    pad = 6
     drawRow ry = str [cell cx ry | cx <- [0..gameMaxX]]
     cell cx cy
       | cx == hd^.px && cy == hd^.py = drawCell Head
@@ -149,7 +167,15 @@ handleGameEvent :: Game -> BrickEvent () GameEvent -> EventM () (Next Game)
 handleGameEvent game e =
   case e of
     AppEvent Tick -> case tickGame game of
-      Just g -> continue g
+      Just g -> do
+        now <- liftIO getCurrentTime
+        if diffUTCTime now (g^.time) > gameSpeedChangeInterval && g^.speed < gameMaxSpeed
+          then do
+            liftIO . atomically . modifyTVar (g^.tvar) $ \delay -> delay - gameDelayStep
+            continue $ g & speed %~ min gameMaxSpeed . succ
+                         & time .~ now
+          else
+            continue g
       Nothing -> halt game
     VtyEvent (EvKey KUp _) -> continue $ changeDirection North
     VtyEvent (EvKey KDown _) -> continue $ changeDirection South
@@ -178,8 +204,10 @@ main = do
   -- keyboard events come whenever the keyboard is pressed. Which means that, for example,
   -- the snake's direction could be change twice in a row, effectively making a 180 turn,
   -- which ends the game. Figure out a fix for that.
+  tv <- newTVarIO 200000
   void $ forkIO $ forever $ do
     writeBChan ch Tick
-    threadDelay 100000
+    threadDelay =<< readTVarIO tv
   gen <- getStdGen
-  void $ customMain vty (standardIOConfig >>= mkVty) (Just ch) app (initGame gen)
+  tm <- getCurrentTime
+  void $ customMain vty (standardIOConfig >>= mkVty) (Just ch) app (initGame gen tv tm)

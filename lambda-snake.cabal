@@ -13,8 +13,12 @@ executable lambda-snake
                   , brick >= 0.55
                   , microlens >= 0.4.11.2
                   , microlens-th
+                  , mtl
                   , random
                   , vty >= 5.30
+                  , stm
+                  , time
+                  , transformers
   hs-source-dirs: src
   main-is:        Main.hs
   other-modules:  Snake.Direction, Snake.Position
