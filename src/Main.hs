@@ -99,7 +99,7 @@ initGame gen tv tm = Game { _snake = initSnake
 
 spawnFood :: Game -> Game
 spawnFood game =
-  let obstructed = game^.walls ++ game^.snake^.body
+  let obstructed = game^.walls ++ game^.snake.body
       -- TODO/FIXME: This is stupid and going to be slow when snake gets very long.
       --             Figure out something better.
       genFood 0 g fd = (fd, g)
